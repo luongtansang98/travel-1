@@ -1,0 +1,20 @@
+.root {
+  width: 100%;
+  height: auto;
+  max-width: 100%;
+  color: var(--token-2ObYh10hZuCh);
+  opacity: 0;
+  transition-property: all;
+  transition-duration: 0.3s;
+  transition-timing-function: ease-out;
+  position: relative;
+  min-width: 0;
+  display: none;
+  -webkit-transition-property: all;
+  -webkit-transition-timing-function: ease-out;
+  -webkit-transition-duration: 0.3s;
+}
+.rootisVisible {
+  opacity: 1;
+  display: block;
+}

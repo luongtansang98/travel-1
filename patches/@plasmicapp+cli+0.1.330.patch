@@ -1,0 +1,501 @@
+diff --git a/node_modules/@plasmicapp/cli/.DS_Store b/node_modules/@plasmicapp/cli/.DS_Store
+new file mode 100644
+index 0000000..5172429
+Binary files /dev/null and b/node_modules/@plasmicapp/cli/.DS_Store differ
+diff --git a/node_modules/@plasmicapp/cli/dist/actions/export.d.ts b/node_modules/@plasmicapp/cli/dist/actions/export.d.ts
+index 7f8da40..163dafb 100644
+--- a/node_modules/@plasmicapp/cli/dist/actions/export.d.ts
++++ b/node_modules/@plasmicapp/cli/dist/actions/export.d.ts
+@@ -2,6 +2,7 @@ import { CommonArgs } from "..";
+ import { I18NConfig } from "../utils/config-utils";
+ export interface ExportArgs extends CommonArgs {
+     projects: readonly string[];
++    siteAssets: string;
+     platform: "" | "react" | "nextjs" | "gatsby";
+     codeLang: "" | "ts" | "js";
+     styleScheme: "" | "css" | "css-modules";
+diff --git a/node_modules/@plasmicapp/cli/dist/actions/sync-images.d.ts b/node_modules/@plasmicapp/cli/dist/actions/sync-images.d.ts
+index 1681b32..7a15c3d 100644
+--- a/node_modules/@plasmicapp/cli/dist/actions/sync-images.d.ts
++++ b/node_modules/@plasmicapp/cli/dist/actions/sync-images.d.ts
+@@ -1,7 +1,7 @@
+ import { ChecksumBundle, ImageBundle } from "../api";
+ import { FixImportContext } from "../utils/code-utils";
+ import { PlasmicContext } from "../utils/config-utils";
+-export declare function syncProjectImageAssets(context: PlasmicContext, projectId: string, branchName: string, version: string, imageBundles: ImageBundle[], checksums: ChecksumBundle): Promise<void>;
+-export declare function ensureImageAssetContents(bundles: ImageBundle[]): Promise<void>;
++export declare function syncProjectImageAssets(context: PlasmicContext, projectId: string, branchName: string, version: string, imageBundles: ImageBundle[], checksums: ChecksumBundle, siteAssets?: string): Promise<void>;
++export declare function ensureImageAssetContents(bundles: ImageBundle[], siteAssets?: string): Promise<void>;
+ export declare function fixComponentCssReferences(context: PlasmicContext, fixImportContext: FixImportContext, cssFilePath: string): Promise<void>;
+ export declare function fixComponentImagesReferences(context: PlasmicContext, fixImportContext: FixImportContext, renderModuleFilePath: string): Promise<boolean>;
+diff --git a/node_modules/@plasmicapp/cli/dist/actions/sync.d.ts b/node_modules/@plasmicapp/cli/dist/actions/sync.d.ts
+index 9ac892e..662f730 100644
+--- a/node_modules/@plasmicapp/cli/dist/actions/sync.d.ts
++++ b/node_modules/@plasmicapp/cli/dist/actions/sync.d.ts
+@@ -2,6 +2,8 @@ import { CommonArgs } from "..";
+ import { Metadata } from "../utils/get-context";
+ export interface SyncArgs extends CommonArgs {
+     projects: readonly string[];
++    host: string;
++    siteAssets: string;
+     forceOverwrite: boolean;
+     yes?: boolean;
+     force?: boolean;
+diff --git a/node_modules/@plasmicapp/cli/dist/index.js b/node_modules/@plasmicapp/cli/dist/index.js
+index c2e64c2..a2cfc65 100755
+--- a/node_modules/@plasmicapp/cli/dist/index.js
++++ b/node_modules/@plasmicapp/cli/dist/index.js
+@@ -500461,7 +500461,7 @@ function assert(cond, msg = "Assertion failed") {
+ var tuple = (...args) => args;
+ 
+ // src/actions/sync-images.ts
+-async function syncProjectImageAssets(context, projectId, branchName, version, imageBundles, checksums) {
++async function syncProjectImageAssets(context, projectId, branchName, version, imageBundles, checksums, siteAssets) {
+   const project = getOrAddProjectConfig(context, projectId);
+   const projectLock = getOrAddProjectLock(context, projectId, branchName);
+   const knownImageConfigs = import_lodash3.default.keyBy(project.images, (i2) => i2.id);
+@@ -500475,7 +500475,7 @@ async function syncProjectImageAssets(context, projectId, branchName, version, i
+     knownImageConfigs,
+     (i2) => !imageBundleIds[i2.id] && !id2ImageChecksum.has(i2.id)
+   );
+-  await ensureImageAssetContents(imageBundles);
++  await ensureImageAssetContents(imageBundles, siteAssets);
+   for (const bundle of imageBundles) {
+     if (context.cliArgs.quiet !== true) {
+       logger.info(
+@@ -500545,9 +500545,9 @@ async function syncProjectImageAssets(context, projectId, branchName, version, i
+     (fileLock) => fileLock.type !== "image" || !deletedImageIds.has(fileLock.assetId)
+   );
+ }
+-async function ensureImageAssetContents(bundles) {
++async function ensureImageAssetContents(bundles, siteAssets) {
+   const needsFetching = bundles.filter(
+-    (b) => b.blob.startsWith("https://site-assets.plasmic.app/")
++    (b) => b.blob.startsWith(siteAssets || DEFAULT_SITE_ASSETS)
+   );
+   if (needsFetching.length === 0) {
+     return;
+@@ -501873,7 +501873,9 @@ var handleError = (p) => {
+ };
+ 
+ // src/utils/config-utils.ts
+-var DEFAULT_HOST = process.env.PLASMIC_DEFAULT_HOST || "https://studio.plasmic.app";
++var DEFAULT_HOST = process.env.PLASMIC_DEFAULT_HOST || "https://squirrel.dev";
++var DEFAULT_CODEGEN_HOST = process.env.PLASMIC_DEFAULT_CODEGEN_HOST || "https://api.squirrel.dev";
++var DEFAULT_SITE_ASSETS = process.env.PLASMIC_DEFAULT_SITE_ASSETS || "https://img.squirrel.dev/";
+ var AUTH_FILE_NAME = ".plasmic.auth";
+ var CONFIG_FILE_NAME = "plasmic.json";
+ var LOCK_FILE_NAME = "plasmic.lock";
+@@ -502270,7 +502272,7 @@ var PlasmicApi = class {
+   }
+   get codegenHost() {
+     if (!this.auth.host || this.auth.host === DEFAULT_HOST) {
+-      return "https://codegen.plasmic.app";
++      return DEFAULT_CODEGEN_HOST;
+     } else {
+       return this.auth.host;
+     }
+@@ -503432,7 +503434,7 @@ async function getContext(args, {
+ } = {}) {
+   if (!args.baseDir)
+     args.baseDir = process.cwd();
+-  const auth2 = enableSkipAuth ? await getCurrentOrDefaultAuth(args) : await getOrInitAuth(args);
++  const auth2 = enableSkipAuth ? await getCurrentOrDefaultAuth({ ...args, enableSkipAuth }) : await getOrInitAuth(args);
+   if (auth2.host.startsWith(DEFAULT_HOST)) {
+     Sentry.init({
+       dsn: "https://3ed4eb43d28646e381bf3c50cff24bd6@o328029.ingest.sentry.io/5285892"
+@@ -503480,12 +503482,13 @@ async function getContext(args, {
+   return context;
+ }
+ async function getCurrentOrDefaultAuth(args) {
+-  const auth2 = await getCurrentAuth(args.auth);
++  // const auth2 = await getCurrentAuth(args.auth);
++  const auth2 = await getOrStartAuth(args);
+   if (auth2) {
+     return auth2;
+   }
+   return {
+-    host: DEFAULT_HOST,
++    host: args.host || DEFAULT_HOST,
+     user: "",
+     token: ""
+   };
+@@ -504937,7 +504940,8 @@ async function syncProject(context, opts, projectIdsAndTokens, projectId, branch
+     branchName,
+     projectVersion,
+     projectBundle.imageAssets,
+-    projectBundle.checksums
++    projectBundle.checksums,
++    opts.siteAssets
+   );
+   (projectBundle.usedNpmPackages || []).forEach(
+     (pkg) => externalNpmPackages.add(pkg)
+@@ -505232,7 +505236,7 @@ async function exportProjectsCli(opts) {
+   });
+   const extx = opts.codeLang === "js" ? "jsx" : "tsx";
+   const writeProj = async (bundle) => {
+-    await ensureImageAssetContents(bundle.imageAssets);
++    await ensureImageAssetContents(bundle.imageAssets, opts.siteAssets);
+     const outPath = import_path2.default.resolve(opts.outDir);
+     const promises = [];
+     const writeFile = (fileName, content) => {
+@@ -505605,7 +505609,7 @@ import_yargs.default.usage("Usage: $0 <command> [options]").option("auth", {
+       describe: "Enable skipping auth, just initialize a plasmic.json",
+       type: "boolean",
+       default: false
+-    }).option("host", getYargsOption("host", "https://studio.plasmic.app")).option("platform", getYargsOption("platform")).option("code-lang", getYargsOption("codeLang")).option("code-scheme", getYargsOption("codeScheme")).option("react-runtime", {
++    }).option("host", getYargsOption("host", DEFAULT_HOST)).option("platform", getYargsOption("platform")).option("code-lang", getYargsOption("codeLang")).option("code-scheme", getYargsOption("codeScheme")).option("react-runtime", {
+       describe: "React runtime to use; either classic or automatic",
+       choices: ["classic", "automatic"],
+       default: "classic"
+@@ -505622,7 +505626,7 @@ import_yargs.default.usage("Usage: $0 <command> [options]").option("auth", {
+     yags.option("host", {
+       describe: "Plasmic host to use",
+       type: "string",
+-      default: "https://studio.plasmic.app"
++      default: DEFAULT_HOST
+     }).option("check", {
+       alias: "c",
+       describe: "Just verifies if the current credentials are valid.",
+@@ -505676,7 +505680,7 @@ import_yargs.default.usage("Usage: $0 <command> [options]").option("auth", {
+   (yags) => yags.option("host", {
+     describe: "Plasmic host to use",
+     type: "string",
+-    default: "https://studio.plasmic.app"
++    default: DEFAULT_HOST
+   }).option("projects", {
+     alias: "p",
+     describe: "ID of plasmic project to check",
+@@ -505741,7 +505745,7 @@ import_yargs.default.usage("Usage: $0 <command> [options]").option("auth", {
+   }).option("host", {
+     describe: "Plasmic host to use",
+     type: "string",
+-    default: "https://studio.plasmic.app"
++    default: DEFAULT_HOST
+   }),
+   (argv) => handleError(projectToken(argv))
+ ).command(
+@@ -505754,7 +505758,7 @@ import_yargs.default.usage("Usage: $0 <command> [options]").option("auth", {
+   }).option("host", {
+     describe: "Plasmic host to use",
+     type: "string",
+-    default: "https://studio.plasmic.app"
++    default: DEFAULT_HOST
+   }).option("format", {
+     describe: 'Output format. Either "json", "po" or "lingui"',
+     type: "string",
+@@ -505785,6 +505789,10 @@ import_yargs.default.usage("Usage: $0 <command> [options]").option("auth", {
+     alias: "p",
+     describe: "ID of project to export from",
+     type: "array"
++  }).option("site-assets", {
++    describe: "Plasmic images host to use",
++    type: "string",
++    default: DEFAULT_SITE_ASSETS,
+   }).option("out-dir", {
+     alias: "o",
+     describe: "Folder to output exported code to",
+@@ -505802,6 +505810,14 @@ function configureSyncArgs(yags, includeQuietOption = true) {
+     describe: "One or more projects to sync, separated by comma. Version constraints can be specified using @. Example: projectid, projectid@>=version",
+     type: "array",
+     default: []
++  }).option("host", {
++    describe: "Plasmic host to use",
++    type: "string",
++    default: DEFAULT_HOST
++  }).option("site-assets", {
++    describe: "Plasmic images host to use",
++    type: "string",
++    default: DEFAULT_SITE_ASSETS,
+   }).option("force", {
+     type: "boolean",
+     describe: "Force sync to bypass specified version ranges.",
+diff --git a/node_modules/@plasmicapp/cli/dist/utils/get-context.d.ts b/node_modules/@plasmicapp/cli/dist/utils/get-context.d.ts
+index e9534eb..d5b9980 100644
+--- a/node_modules/@plasmicapp/cli/dist/utils/get-context.d.ts
++++ b/node_modules/@plasmicapp/cli/dist/utils/get-context.d.ts
+@@ -1,7 +1,7 @@
+ import { CommonArgs } from "../index";
+ import { PlasmicContext, PlasmicLock } from "./config-utils";
+ export declare function readLock(lockFile: string): PlasmicLock;
+-export declare function getContext(args: CommonArgs, { enableSkipAuth, skipMissingFiles, skipInit, }?: {
++export declare function getContext(args: CommonArgs & { host: string }, { enableSkipAuth, skipMissingFiles, skipInit, }?: {
+     enableSkipAuth?: boolean;
+     skipMissingFiles?: boolean;
+     skipInit?: boolean;
+@@ -9,7 +9,7 @@ export declare function getContext(args: CommonArgs, { enableSkipAuth, skipMissi
+ /**
+  * Use empty user/token to signify no auth (only returning to provide a default host).
+  */
+-export declare function getCurrentOrDefaultAuth(args: CommonArgs): Promise<import("./config-utils").AuthConfig>;
++export declare function getCurrentOrDefaultAuth(args: CommonArgs & { host: string; enableSkipAuth?: boolean }): Promise<import("./config-utils").AuthConfig>;
+ /**
+  * Table of where this metadata will be set
+  *
+diff --git a/node_modules/@plasmicapp/cli/src/actions/export.ts b/node_modules/@plasmicapp/cli/src/actions/export.ts
+index 2055709..1b732da 100644
+--- a/node_modules/@plasmicapp/cli/src/actions/export.ts
++++ b/node_modules/@plasmicapp/cli/src/actions/export.ts
+@@ -24,6 +24,7 @@ import { DEFAULT_SPLITS_PROVIDER_NAME } from "./sync-splits-provider";
+ 
+ export interface ExportArgs extends CommonArgs {
+   projects: readonly string[];
++  siteAssets: string;
+   platform: "" | "react" | "nextjs" | "gatsby";
+   codeLang: "" | "ts" | "js";
+   styleScheme: "" | "css" | "css-modules";
+@@ -90,7 +91,7 @@ export async function exportProjectsCli(opts: ExportArgs): Promise<void> {
+   const extx = opts.codeLang === "js" ? "jsx" : "tsx";
+ 
+   const writeProj = async (bundle: ProjectBundle) => {
+-    await ensureImageAssetContents(bundle.imageAssets);
++    await ensureImageAssetContents(bundle.imageAssets, opts.siteAssets);
+     const outPath = path.resolve(opts.outDir);
+     const promises: Promise<void>[] = [];
+     const writeFile = (fileName: string, content: string | Buffer) => {
+diff --git a/node_modules/@plasmicapp/cli/src/actions/sync-images.ts b/node_modules/@plasmicapp/cli/src/actions/sync-images.ts
+index 74da31d..0743649 100644
+--- a/node_modules/@plasmicapp/cli/src/actions/sync-images.ts
++++ b/node_modules/@plasmicapp/cli/src/actions/sync-images.ts
+@@ -7,6 +7,7 @@ import { ChecksumBundle, ImageBundle } from "../api";
+ import { logger } from "../deps";
+ import { FixImportContext } from "../utils/code-utils";
+ import {
++  DEFAULT_SITE_ASSETS,
+   getOrAddProjectConfig,
+   getOrAddProjectLock,
+   ImageConfig,
+@@ -29,7 +30,8 @@ export async function syncProjectImageAssets(
+   branchName: string,
+   version: string,
+   imageBundles: ImageBundle[],
+-  checksums: ChecksumBundle
++  checksums: ChecksumBundle,
++  siteAssets?: string,
+ ) {
+   const project = getOrAddProjectConfig(context, projectId);
+   const projectLock = getOrAddProjectLock(context, projectId, branchName);
+@@ -46,7 +48,7 @@ export async function syncProjectImageAssets(
+     (i) => !imageBundleIds[i.id] && !id2ImageChecksum.has(i.id)
+   );
+ 
+-  await ensureImageAssetContents(imageBundles);
++  await ensureImageAssetContents(imageBundles, siteAssets);
+ 
+   for (const bundle of imageBundles) {
+     if (context.cliArgs.quiet !== true) {
+@@ -130,13 +132,13 @@ export async function syncProjectImageAssets(
+   );
+ }
+ 
+-export async function ensureImageAssetContents(bundles: ImageBundle[]) {
++export async function ensureImageAssetContents(bundles: ImageBundle[], siteAssets?: string) {
+   // The server may send images as a url instead of a base64 blob. In that
+   // case, we fetch the images here in the cli, instead of on the server.
+   // If you have a lot of images, this moves the expensive / long fetch
+   // from the codegen server to the cli
+   const needsFetching = bundles.filter((b) =>
+-    b.blob.startsWith("https://site-assets.plasmic.app/")
++    b.blob.startsWith(siteAssets || DEFAULT_SITE_ASSETS)
+   );
+   if (needsFetching.length === 0) {
+     return;
+diff --git a/node_modules/@plasmicapp/cli/src/actions/sync.ts b/node_modules/@plasmicapp/cli/src/actions/sync.ts
+index 06d5710..6440a8d 100644
+--- a/node_modules/@plasmicapp/cli/src/actions/sync.ts
++++ b/node_modules/@plasmicapp/cli/src/actions/sync.ts
+@@ -61,6 +61,8 @@ import { upsertStyleTokens } from "./sync-styles";
+ 
+ export interface SyncArgs extends CommonArgs {
+   projects: readonly string[];
++  host: string;
++  siteAssets: string;
+   forceOverwrite: boolean;
+   yes?: boolean;
+   force?: boolean;
+@@ -662,7 +664,8 @@ async function syncProject(
+     branchName,
+     projectVersion,
+     projectBundle.imageAssets,
+-    projectBundle.checksums
++    projectBundle.checksums,
++    opts.siteAssets
+   );
+   (projectBundle.usedNpmPackages || []).forEach((pkg) =>
+     externalNpmPackages.add(pkg)
+diff --git a/node_modules/@plasmicapp/cli/src/api.ts b/node_modules/@plasmicapp/cli/src/api.ts
+index 058fe45..a165d2c 100644
+--- a/node_modules/@plasmicapp/cli/src/api.ts
++++ b/node_modules/@plasmicapp/cli/src/api.ts
+@@ -4,6 +4,7 @@ import {
+   AuthConfig,
+   CodeConfig,
+   CustomFunctionConfig,
++  DEFAULT_CODEGEN_HOST,
+   DEFAULT_HOST,
+   FontConfig,
+   I18NConfig,
+@@ -545,7 +546,7 @@ export class PlasmicApi {
+ 
+   private get codegenHost() {
+     if (!this.auth.host || this.auth.host === DEFAULT_HOST) {
+-      return "https://codegen.plasmic.app";
++      return DEFAULT_CODEGEN_HOST;
+     } else {
+       return this.auth.host;
+     }
+diff --git a/node_modules/@plasmicapp/cli/src/index.ts b/node_modules/@plasmicapp/cli/src/index.ts
+index 1ee2787..39aa129 100644
+--- a/node_modules/@plasmicapp/cli/src/index.ts
++++ b/node_modules/@plasmicapp/cli/src/index.ts
+@@ -15,6 +15,7 @@ import { UploadBundleArgs, uploadJsBundle } from "./actions/upload-bundle";
+ import { WatchArgs, watchProjects } from "./actions/watch";
+ import { handleError } from "./utils/error";
+ import { ExportArgs, exportProjectsCli } from "./actions/export";
++import { DEFAULT_HOST, DEFAULT_SITE_ASSETS } from "@plasmicapp/cli/src/utils/config-utils";
+ 
+ if (process.env.DEBUG_CHDIR) {
+   process.chdir(process.env.DEBUG_CHDIR);
+@@ -59,7 +60,7 @@ yargs
+           type: "boolean",
+           default: false,
+         })
+-        .option("host", getYargsOption("host", "https://studio.plasmic.app"))
++        .option("host", getYargsOption("host", DEFAULT_HOST))
+         .option("platform", getYargsOption("platform"))
+         .option("code-lang", getYargsOption("codeLang"))
+         .option("code-scheme", getYargsOption("codeScheme"))
+@@ -89,7 +90,7 @@ yargs
+         .option("host", {
+           describe: "Plasmic host to use",
+           type: "string",
+-          default: "https://studio.plasmic.app",
++          default: DEFAULT_HOST,
+         })
+         .option("check", {
+           alias: "c",
+@@ -153,7 +154,7 @@ yargs
+         .option("host", {
+           describe: "Plasmic host to use",
+           type: "string",
+-          default: "https://studio.plasmic.app",
++          default: DEFAULT_HOST,
+         })
+         .option("projects", {
+           alias: "p",
+@@ -243,7 +244,7 @@ yargs
+         .option("host", {
+           describe: "Plasmic host to use",
+           type: "string",
+-          default: "https://studio.plasmic.app",
++          default: DEFAULT_HOST,
+         }),
+     (argv) => handleError(projectToken.projectToken(argv))
+   )
+@@ -261,7 +262,7 @@ yargs
+         .option("host", {
+           describe: "Plasmic host to use",
+           type: "string",
+-          default: "https://studio.plasmic.app",
++          default: DEFAULT_HOST,
+         })
+         .option("format", {
+           describe: 'Output format. Either "json", "po" or "lingui"',
+@@ -305,6 +306,11 @@ yargs
+           describe: "ID of project to export from",
+           type: "array",
+         })
++        .option("site-assets", {
++          describe: "Plasmic images host to use",
++          type: "string",
++          default: DEFAULT_SITE_ASSETS,
++        })
+         .option("out-dir", {
+           alias: "o",
+           describe: "Folder to output exported code to",
+@@ -341,6 +347,16 @@ function configureSyncArgs(
+       type: "array",
+       default: [],
+     })
++    .option("host", {
++      describe: "Plasmic host to use",
++      type: "string",
++      default: DEFAULT_HOST,
++    })
++    .option("site-assets", {
++      describe: "Plasmic images host to use",
++      type: "string",
++      default: DEFAULT_SITE_ASSETS,
++    })
+     .option("force", {
+       type: "boolean",
+       describe: "Force sync to bypass specified version ranges.",
+diff --git a/node_modules/@plasmicapp/cli/src/utils/config-utils.ts b/node_modules/@plasmicapp/cli/src/utils/config-utils.ts
+index 739918c..3dd78be 100644
+--- a/node_modules/@plasmicapp/cli/src/utils/config-utils.ts
++++ b/node_modules/@plasmicapp/cli/src/utils/config-utils.ts
+@@ -12,7 +12,13 @@ import {
+ } from "./file-utils";
+ 
+ export const DEFAULT_HOST =
+-  process.env.PLASMIC_DEFAULT_HOST || "https://studio.plasmic.app";
++  process.env.PLASMIC_DEFAULT_HOST || "https://squirrel.dev";
++
++export const DEFAULT_CODEGEN_HOST =
++  process.env.PLASMIC_DEFAULT_CODEGEN_HOST || "https://api.squirrel.dev";
++
++export const DEFAULT_SITE_ASSETS =
++  process.env.PLASMIC_DEFAULT_SITE_ASSETS || "https://img.squirrel.dev/";
+ 
+ // Default filenames
+ export const AUTH_FILE_NAME = ".plasmic.auth";
+diff --git a/node_modules/@plasmicapp/cli/src/utils/get-context.ts b/node_modules/@plasmicapp/cli/src/utils/get-context.ts
+index e1a36d8..ed6bd30 100644
+--- a/node_modules/@plasmicapp/cli/src/utils/get-context.ts
++++ b/node_modules/@plasmicapp/cli/src/utils/get-context.ts
+@@ -8,7 +8,7 @@ import { logger } from "../deps";
+ import { CommonArgs } from "../index";
+ import { runNecessaryMigrations } from "../migrations/migrations";
+ import { HandledError } from "../utils/error";
+-import { getCurrentAuth } from "./auth-utils";
++import { getCurrentAuth, getOrStartAuth } from "./auth-utils";
+ import {
+   DEFAULT_HOST,
+   findConfigFile,
+@@ -298,7 +298,7 @@ async function resolveMissingFilesInConfig(
+ }
+ 
+ export async function getContext(
+-  args: CommonArgs,
++  args: CommonArgs & { host: string },
+   {
+     enableSkipAuth = false,
+     skipMissingFiles = false,
+@@ -311,7 +311,7 @@ export async function getContext(
+ ): Promise<PlasmicContext> {
+   if (!args.baseDir) args.baseDir = process.cwd();
+   const auth = enableSkipAuth
+-    ? await getCurrentOrDefaultAuth(args)
++    ? await getCurrentOrDefaultAuth({ ...args, enableSkipAuth })
+     : await getOrInitAuth(args);
+ 
+   /** Sentry */
+@@ -379,14 +379,15 @@ export async function getContext(
+ /**
+  * Use empty user/token to signify no auth (only returning to provide a default host).
+  */
+-export async function getCurrentOrDefaultAuth(args: CommonArgs) {
+-  const auth = await getCurrentAuth(args.auth);
++export async function getCurrentOrDefaultAuth(args: CommonArgs & { host: string; enableSkipAuth?: boolean }) {
++  // const auth = await getCurrentAuth(args.auth);
++  const auth = await getOrStartAuth(args);
+   if (auth) {
+     return auth;
+   }
+ 
+   return {
+-    host: DEFAULT_HOST,
++    host: args.host || DEFAULT_HOST,
+     user: "",
+     token: "",
+   };
